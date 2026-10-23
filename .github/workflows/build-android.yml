@@ -9,9 +9,9 @@ on:
         default: 'arm64-v8a'
         type: choice
         options:
-          - arm64-v8a
-          - armeabi-v7a
-          - x86_64
+          - arm64-v8a      # -> android-arm64 (RID)
+          - armeabi-v7a    # -> android-arm
+          - x86_64         # -> android-x64
       demo:
         description: 'Build demo variant (different package id)'
         required: true
@@ -63,6 +63,15 @@ jobs:
           DEMO="${{ inputs.demo }}"
           SIGNED="${{ inputs.signed }}"
 
+          # .NET Android RIDs use "android-<arch>", not the ABI name
+          case "$ABI" in
+            arm64-v8a)   RID="android-arm64" ;;
+            armeabi-v7a) RID="android-arm"   ;;
+            x86_64)      RID="android-x64"   ;;
+            *) echo "Unknown ABI: $ABI"; exit 1 ;;
+          esac
+          echo "ABI=$ABI RID=$RID"
+
           EXTRA=""
           if [ "$DEMO" = "false" ]; then EXTRA="$EXTRA -p:NoDemo=true"; fi
 
@@ -74,6 +83,17 @@ jobs:
             EXTRA="$EXTRA -p:AndroidSigningStorePass=env:STORE_PASS"
             export KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
             export STORE_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+          else
+            # No repo secrets: sign with a throwaway self-signed keystore so the APK installs
+            keytool -genkeypair -v -keystore "$RUNNER_TEMP/sideload.keystore" \
+              -storetype PKCS12 -alias sideload -keyalg RSA -keysize 2048 \
+              -validity 10000 -storepass sideload -keypass sideload \
+              -dname "CN=GalaxyBudsClient Sideload, OU=Self, O=Self, L=NA, S=NA, C=NA"
+            EXTRA="$EXTRA -p:AndroidKeyStore=true"
+            EXTRA="$EXTRA -p:AndroidSigningKeyStore=$RUNNER_TEMP/sideload.keystore"
+            EXTRA="$EXTRA -p:AndroidSigningKeyAlias=sideload"
+            EXTRA="$EXTRA -p:AndroidSigningKeyPass=sideload"
+            EXTRA="$EXTRA -p:AndroidSigningStorePass=sideload"
           fi
 
           dotnet publish GalaxyBudsClient.Android/GalaxyBudsClient.Android.csproj \
@@ -81,7 +101,7 @@ jobs:
             -c Release \
             -p:IsAndroid=true \
             -p:AndroidPackageFormats=apk \
-            -p:RuntimeIdentifier=android-$ABI \
+            -p:RuntimeIdentifier="$RID" \
             -p:EmbedAssembliesIntoApk=true \
             -p:DebugType=PdbOnly \
             -p:NotDebuggable=true \
