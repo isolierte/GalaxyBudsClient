@@ -103,19 +103,30 @@ jobs:
             -p:AndroidPackageFormats=apk \
             -p:RuntimeIdentifier="$RID" \
             -p:EmbedAssembliesIntoApk=true \
+            -p:AndroidEnableAssemblyCompression=true \
+            -p:AndroidLinkMode=SdkOnly \
             -p:DebugType=PdbOnly \
             -p:NotDebuggable=true \
             -p:AndroidSdkDirectory="$ANDROID_HOME" \
             $EXTRA
 
       - name: Locate APK
+        id: find_apk
         run: |
-          find . -name '*.apk' -printf '%p  %s bytes\n' | sort
+          P="GalaxyBudsClient.Android/bin/Release/net10.0-android36.1/android-${{ inputs.abi == 'arm64-v8a' && 'arm64' || (inputs.abi == 'armeabi-v7a' && 'arm' || 'x64') }}/publish"
+          APK=$(find "$P" -name '*-Signed.apk' | head -1)
+          if [ -z "$APK" ]; then APK=$(find "$P" -name '*.apk' | head -1); fi
+          echo "Using $APK"
+          ls -lh "$APK"
+          cp "$APK" "$RUNNER_TEMP/GalaxyBudsClient.apk"
+          echo "apk=$RUNNER_TEMP/GalaxyBudsClient.apk" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -c%s "$APK")" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: GalaxyBudsClient-${{ inputs.abi }}-apk
-          path: '**/*.apk'
+          path: ${{ steps.find_apk.outputs.apk }}
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
