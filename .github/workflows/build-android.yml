@@ -116,6 +116,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: GalaxyBudsClient-${{ inputs.abi }}-apk
-          path: '**/*.apk'
+          path: GalaxyBudsClient.Android/bin/Release/net10.0-android36.1/android-*/publish/*-Signed.apk
           if-no-files-found: error
           retention-days: 14
