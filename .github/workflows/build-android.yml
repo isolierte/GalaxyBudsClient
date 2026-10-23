@@ -1,0 +1,101 @@
+name: Build Android APK (arm64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      abi:
+        description: 'Android ABI'
+        required: true
+        default: 'arm64-v8a'
+        type: choice
+        options:
+          - arm64-v8a
+          - armeabi-v7a
+          - x86_64
+      demo:
+        description: 'Build demo variant (different package id)'
+        required: true
+        default: false
+        type: boolean
+      signed:
+        description: 'Sign with release keystore (needs secrets)'
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: 'ga'
+
+      - name: Show SDK info
+        run: dotnet --info
+
+      - name: Install Android workload
+        run: |
+          dotnet workload install android --skip-manifest-update || \
+          dotnet workload install android
+
+      - name: Accept Android SDK licenses
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          ls "$ANDROID_HOME/platforms" || true
+
+      - name: Decode keystore
+        if: ${{ inputs.signed }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Restore
+        run: dotnet restore GalaxyBudsClient.Android/GalaxyBudsClient.Android.csproj -p:IsAndroid=true
+
+      - name: Publish APK
+        shell: bash
+        run: |
+          set -e
+          ABI="${{ inputs.abi }}"
+          DEMO="${{ inputs.demo }}"
+          SIGNED="${{ inputs.signed }}"
+
+          EXTRA=""
+          if [ "$DEMO" = "false" ]; then EXTRA="$EXTRA -p:NoDemo=true"; fi
+
+          if [ "$SIGNED" = "true" ]; then
+            EXTRA="$EXTRA -p:AndroidKeyStore=true"
+            EXTRA="$EXTRA -p:AndroidSigningKeyStore=$RUNNER_TEMP/release.keystore"
+            EXTRA="$EXTRA -p:AndroidSigningKeyAlias=${{ secrets.ANDROID_KEY_ALIAS }}"
+            EXTRA="$EXTRA -p:AndroidSigningKeyPass=env:KEY_PASS"
+            EXTRA="$EXTRA -p:AndroidSigningStorePass=env:STORE_PASS"
+            export KEY_PASS="${{ secrets.ANDROID_KEY_PASSWORD }}"
+            export STORE_PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+          fi
+
+          dotnet publish GalaxyBudsClient.Android/GalaxyBudsClient.Android.csproj \
+            -f net10.0-android36.1 \
+            -c Release \
+            -p:IsAndroid=true \
+            -p:AndroidPackageFormats=apk \
+            -p:RuntimeIdentifier=android-$ABI \
+            -p:EmbedAssembliesIntoApk=true \
+            -p:DebugType=PdbOnly \
+            -p:NotDebuggable=true \
+            -p:AndroidSdkDirectory="$ANDROID_HOME" \
+            $EXTRA
+
+      - name: Locate APK
+        run: |
+          find . -name '*.apk' -printf '%p  %s bytes\n' | sort
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GalaxyBudsClient-${{ inputs.abi }}-apk
+          path: '**/*.apk'
+          if-no-files-found: error
+          retention-days: 14
